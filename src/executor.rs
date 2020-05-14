@@ -1,12 +1,11 @@
 use futures::{
-    channel::oneshot,
     future::Future,
     task::{self, Poll},
 };
 use futures_intrusive::sync::{OwnedSemaphoreReleaser, Semaphore};
 use iou::IoUring;
 use pin_utils::pin_mut;
-use std::{cell::Cell, io, ptr::NonNull, sync::Arc};
+use std::{cell::Cell, io, pin::Pin, ptr::NonNull, sync::Arc};
 
 const SQ_CAPACITY: u32 = 16;
 
@@ -22,8 +21,13 @@ impl Drop for ResetOnDrop {
     }
 }
 
+pub trait Event {
+    unsafe fn prepare(self: Pin<&mut Self>, sqe: &mut iou::SubmissionQueueEvent<'_>);
+    unsafe fn complete(self: Pin<&mut Self>, cqe: &mut iou::CompletionQueueEvent<'_>);
+}
+
 struct UserData {
-    complete: Box<dyn FnOnce(io::Result<usize>)>,
+    event: Pin<Box<dyn Event + Send + 'static>>,
     permit: OwnedSemaphoreReleaser,
 }
 
@@ -59,27 +63,18 @@ impl Executor {
         self.sem_sq_capacity.clone().acquire_owned(1)
     }
 
-    pub(crate) fn nop(
+    pub(crate) fn submit_event(
         &mut self,
+        event: impl Event + Send + 'static,
         permit: OwnedSemaphoreReleaser,
-    ) -> impl Future<Output = io::Result<usize>> {
-        //
+    ) {
         let mut sqe = self.ring.next_sqe().expect("SQ is full");
-
+        let mut event: Pin<Box<dyn Event + Send>> = Box::pin(event);
         unsafe {
-            uring_sys::io_uring_prep_nop(sqe.raw_mut());
+            event.as_mut().prepare(&mut sqe);
         }
-
-        let (tx, rx) = oneshot::channel();
-        let user_data = Box::new(UserData {
-            callback: Box::new(|res| {
-                let _ = tx.send(res);
-            }),
-            permit,
-        });
+        let user_data = Box::new(UserData { event, permit });
         sqe.set_user_data(Box::into_raw(user_data) as _);
-
-        async move { rx.await.expect("cancelled") }
     }
 
     pub fn block_on<Fut: Future>(&mut self, fut: Fut) -> Fut::Output {
@@ -90,11 +85,13 @@ impl Executor {
 
         loop {
             let mut cnt = 0;
-            while let Some(event) = self.ring.cq().peek_for_cqe() {
-                let UserData { complete, permit } =
-                    unsafe { *Box::from_raw(event.user_data() as *mut UserData) };
+            while let Some(mut cqe) = self.ring.cq().peek_for_cqe() {
+                let UserData { mut event, permit } =
+                    unsafe { *Box::from_raw(cqe.user_data() as *mut UserData) };
+                unsafe {
+                    event.as_mut().complete(&mut cqe);
+                }
                 drop(permit);
-                complete(event.result());
                 cnt += 1;
             }
             if cnt > 0 {
