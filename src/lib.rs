@@ -10,6 +10,8 @@ pub fn block_on<Fut: Future>(fut: Fut) -> Fut::Output {
 }
 
 pub async fn nop() -> std::io::Result<usize> {
-    let handle = Executor::with_current(|exec| exec.nop());
+    let acquire_permit = Executor::with_current(|exec| exec.acquire_permit());
+    let permit = acquire_permit.await;
+    let handle = Executor::with_current(|exec| exec.nop(permit));
     handle.await
 }
