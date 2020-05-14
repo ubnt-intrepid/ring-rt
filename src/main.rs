@@ -1,15 +1,11 @@
-mod executor;
-
-use crate::executor::Executor;
-use futures::future::Future;
-
-fn block_on<Fut: Future>(fut: Fut) -> Fut::Output {
-    let mut executor = Executor::new();
-    executor.block_on(fut)
-}
+use futures::stream::{self, StreamExt as _};
 
 fn main() {
-    block_on(async {
-        println!("Hello, world!");
+    ring_rt::block_on(async {
+        stream::iter(0..10usize)
+            .for_each_concurrent(None, |_| async {
+                let _ = ring_rt::nop().await;
+            })
+            .await;
     })
 }
