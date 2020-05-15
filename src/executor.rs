@@ -36,8 +36,8 @@ pub(crate) fn get<R>(f: impl FnOnce(&mut Executor) -> R) -> R {
 }
 
 struct UserData {
-    op: Pin<Box<dyn Operation + Send + 'static>>,
     permit: OwnedSemaphoreReleaser,
+    op: Pin<Box<dyn Operation + Send + 'static>>,
 }
 
 pub struct Executor {
@@ -59,17 +59,16 @@ impl Executor {
         self.sem_sq_capacity.clone().acquire_owned(1)
     }
 
-    pub(crate) fn submit_event(
+    pub(crate) fn submit_op(
         &mut self,
-        event: impl Operation + Send + 'static,
         permit: OwnedSemaphoreReleaser,
+        op: Pin<Box<dyn Operation + Send + 'static>>,
     ) {
         let mut sqe = self.ring.next_sqe().expect("SQ is full");
-        let mut event: Pin<Box<dyn Operation + Send>> = Box::pin(event);
+        let mut user_data = Box::new(UserData { permit, op });
         unsafe {
-            event.as_mut().prepare(&mut sqe);
+            user_data.op.as_mut().prepare(&mut sqe);
         }
-        let user_data = Box::new(UserData { op: event, permit });
         sqe.set_user_data(Box::into_raw(user_data) as _);
     }
 
@@ -83,7 +82,10 @@ impl Executor {
                 return ret;
             }
 
-            self.ring.sq().submit().expect("failed to submit SQEs");
+            self.ring
+                .sq()
+                .submit_and_wait(1)
+                .expect("failed to submit SQEs");
 
             while let Some(mut cqe) = self.ring.cq().peek_for_cqe() {
                 unsafe {

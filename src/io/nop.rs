@@ -23,9 +23,9 @@ pub async fn nop() -> io::Result<usize> {
     let permit = acquire_permit.await;
 
     let (tx, rx) = oneshot::channel();
-    let nop_event = Nop { tx: Some(tx) };
+    let nop = Box::pin(Nop { tx: Some(tx) });
 
-    crate::executor::get(|exec| exec.submit_event(nop_event, permit));
+    crate::executor::get(|exec| exec.submit_op(permit, nop));
 
     rx.await.expect("canceled")
 }

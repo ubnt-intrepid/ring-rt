@@ -1,5 +1,7 @@
+mod accept;
 mod nop;
 
+pub use accept::accept;
 pub use nop::nop;
 
 use iou::{CompletionQueueEvent, SubmissionQueueEvent};
