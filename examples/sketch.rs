@@ -3,7 +3,7 @@ use futures::{
     select,
     stream::{self, FuturesUnordered},
 };
-use std::net::TcpListener;
+use std::net::{TcpListener, TcpStream};
 
 fn main() -> anyhow::Result<()> {
     ring_rt::executor::block_on(main_async())
@@ -19,16 +19,9 @@ async fn main_async() -> anyhow::Result<()> {
         select! {
             res = incoming.select_next_some() => {
                 let (stream, addr) = res?;
-                println!("connect a TCP connection to {}", addr);
-                tasks.push(fallible(async move {
-                    let _ = stream;
-                    Ok(())
-                }));
+                tasks.push(handle_connection(stream));
             },
-            res = tasks.select_next_some() => {
-                println!("shutdown");
-                res?;
-            }
+            res = tasks.select_next_some() => res?,
             complete => break,
         }
     }
@@ -36,6 +29,28 @@ async fn main_async() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn fallible<Fut: Future<Output = anyhow::Result<()>>>(fut: Fut) -> Fut {
-    fut
+async fn handle_connection(stream: TcpStream) -> anyhow::Result<()> {
+    let _content = {
+        let (mut buf, res) = ring_rt::io::read(&stream, vec![0u8; 8196]).await;
+        let n = res?;
+        assert!(n <= buf.len());
+        unsafe {
+            buf.set_len(n);
+        }
+        buf
+    };
+
+    let (_, res) = ring_rt::io::write(
+        &stream,
+        "\
+            HTTP/1.1 200 OK\r\n\
+            Server: ring-rt-example\r\n\
+            \r\n\
+        "
+        .into(),
+    )
+    .await;
+    res?;
+
+    Ok(())
 }

@@ -1,8 +1,12 @@
 mod accept;
 mod nop;
+mod read;
+mod write;
 
 pub use accept::accept;
 pub use nop::nop;
+pub use read::read;
+pub use write::write;
 
 use iou::{CompletionQueueEvent, SubmissionQueueEvent};
 use std::pin::Pin;
