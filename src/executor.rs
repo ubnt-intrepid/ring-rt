@@ -1,3 +1,4 @@
+use crate::io::Operation;
 use futures::{
     future::Future,
     task::{self, Poll},
@@ -21,13 +22,21 @@ impl Drop for ResetOnDrop {
     }
 }
 
-pub trait Event {
-    unsafe fn prepare(self: Pin<&mut Self>, sqe: &mut iou::SubmissionQueueEvent<'_>);
-    unsafe fn complete(self: Pin<&mut Self>, cqe: &mut iou::CompletionQueueEvent<'_>);
+fn set<R>(exec: &mut Executor, f: impl FnOnce() -> R) -> R {
+    let exec_ptr = TLS_EXEC.with(|exec_tls| exec_tls.replace(Some(NonNull::from(exec))));
+    let _guard = ResetOnDrop(exec_ptr);
+    f()
+}
+
+pub(crate) fn get<R>(f: impl FnOnce(&mut Executor) -> R) -> R {
+    let exec_ptr = TLS_EXEC.with(|exec| exec.take());
+    let _guard = ResetOnDrop(exec_ptr);
+    let mut exec_ptr = exec_ptr.expect("executor is not set on the current thread");
+    f(unsafe { exec_ptr.as_mut() })
 }
 
 struct UserData {
-    event: Pin<Box<dyn Event + Send + 'static>>,
+    op: Pin<Box<dyn Operation + Send + 'static>>,
     permit: OwnedSemaphoreReleaser,
 }
 
@@ -46,66 +55,51 @@ impl Executor {
         })
     }
 
-    fn scope<R>(&mut self, f: impl FnOnce() -> R) -> R {
-        let exec_ptr = TLS_EXEC.with(|exec| exec.replace(Some(NonNull::from(self))));
-        let _guard = ResetOnDrop(exec_ptr);
-        f()
-    }
-
-    pub(crate) fn with_current<R>(f: impl FnOnce(&mut Executor) -> R) -> R {
-        let exec_ptr = TLS_EXEC.with(|exec| exec.take());
-        let _guard = ResetOnDrop(exec_ptr);
-        let mut exec_ptr = exec_ptr.expect("executor is not set on the current thread");
-        f(unsafe { exec_ptr.as_mut() })
-    }
-
     pub(crate) fn acquire_permit(&self) -> impl Future<Output = OwnedSemaphoreReleaser> + 'static {
         self.sem_sq_capacity.clone().acquire_owned(1)
     }
 
     pub(crate) fn submit_event(
         &mut self,
-        event: impl Event + Send + 'static,
+        event: impl Operation + Send + 'static,
         permit: OwnedSemaphoreReleaser,
     ) {
         let mut sqe = self.ring.next_sqe().expect("SQ is full");
-        let mut event: Pin<Box<dyn Event + Send>> = Box::pin(event);
+        let mut event: Pin<Box<dyn Operation + Send>> = Box::pin(event);
         unsafe {
             event.as_mut().prepare(&mut sqe);
         }
-        let user_data = Box::new(UserData { event, permit });
+        let user_data = Box::new(UserData { op: event, permit });
         sqe.set_user_data(Box::into_raw(user_data) as _);
     }
 
     pub fn block_on<Fut: Future>(&mut self, fut: Fut) -> Fut::Output {
         pin_mut!(fut);
 
-        let waker = task::noop_waker();
-        let mut cx = task::Context::from_waker(&waker);
-
         loop {
-            let mut cnt = 0;
-            while let Some(mut cqe) = self.ring.cq().peek_for_cqe() {
-                let UserData { mut event, permit } =
-                    unsafe { *Box::from_raw(cqe.user_data() as *mut UserData) };
-                unsafe {
-                    event.as_mut().complete(&mut cqe);
-                }
-                drop(permit);
-                cnt += 1;
-            }
-            if cnt > 0 {
-                eprintln!("receive {} CQEs", cnt);
+            let mut cx = task::Context::from_waker(task::noop_waker_ref());
+            let polled = set(self, || fut.as_mut().poll(&mut cx));
+            if let Poll::Ready(ret) = polled {
+                return ret;
             }
 
-            match self.scope(|| fut.as_mut().poll(&mut cx)) {
-                Poll::Ready(ret) => return ret,
-                Poll::Pending => {
-                    let cnt = self.ring.sq().submit().expect("failed to submit SQEs");
-                    eprintln!("submit {} SQEs", cnt);
-                    continue;
+            self.ring.sq().submit().expect("failed to submit SQEs");
+
+            while let Some(mut cqe) = self.ring.cq().peek_for_cqe() {
+                unsafe {
+                    let UserData {
+                        mut op, //
+                        permit,
+                    } = *Box::from_raw(cqe.user_data() as *mut UserData);
+                    op.as_mut().complete(&mut cqe);
+                    drop(permit);
                 }
             }
         }
     }
+}
+
+pub fn block_on<Fut: Future>(fut: Fut) -> Fut::Output {
+    let mut executor = Executor::new().expect("failed to start executor");
+    executor.block_on(fut)
 }
