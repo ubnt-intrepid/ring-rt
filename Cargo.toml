@@ -14,6 +14,7 @@ uring-sys = "1.0.0-beta"
 
 [dev-dependencies]
 anyhow = "1"
+httparse = "1"
 
 [patch.crates-io]
 futures-intrusive = { version = "0.3", git = "https://github.com/ubnt-intrepid/futures-intrusive.git", branch = "owned-semaphore-releaser" }
