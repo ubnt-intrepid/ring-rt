@@ -6,7 +6,7 @@ edition = "2018"
 
 [dependencies]
 futures = "0.3"
-futures-intrusive = { path = "../futures-intrusive" }
+futures-intrusive = "0.3"
 iou = "0.2"
 libc = "0.2"
 pin-utils = "0.1"
@@ -16,4 +16,5 @@ uring-sys = "1.0.0-beta"
 anyhow = "1"
 
 [patch.crates-io]
+futures-intrusive = { version = "0.3", git = "https://github.com/ubnt-intrepid/futures-intrusive.git", branch = "owned-semaphore-releaser" }
 uring-sys = { version = "1.0.0-beta", git = "https://github.com/withoutboats/uring-sys.git", rev = "056707f" }
