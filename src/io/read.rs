@@ -1,4 +1,4 @@
-use crate::io::Operation;
+use crate::io::{Event, Handle};
 use futures::channel::oneshot;
 use std::{io, marker::PhantomPinned, os::unix::prelude::*, pin::Pin};
 
@@ -9,7 +9,7 @@ struct Read {
     _pinned: PhantomPinned,
 }
 
-impl Operation for Read {
+impl Event for Read {
     unsafe fn prepare(self: Pin<&mut Self>, sqe: &mut iou::SubmissionQueueEvent<'_>) {
         let me = self.get_unchecked_mut();
         let buf = me.buf.as_deref_mut().unwrap();
@@ -30,19 +30,14 @@ impl Operation for Read {
     }
 }
 
-pub async fn read(f: &impl AsRawFd, buf: Vec<u8>) -> (Vec<u8>, io::Result<usize>) {
-    let acquire_permit = crate::executor::get(|exec| exec.acquire_permit());
-    let permit = acquire_permit.await;
-
+pub async fn read(handle: &Handle, f: &impl AsRawFd, buf: Vec<u8>) -> (Vec<u8>, io::Result<usize>) {
     let (tx, rx) = oneshot::channel();
-    let nop = Box::pin(Read {
+    let event = Read {
         fd: f.as_raw_fd(),
         tx: Some(tx),
         buf: Some(buf),
         _pinned: PhantomPinned,
-    });
-
-    crate::executor::get(|exec| exec.submit_op(permit, nop));
-
+    };
+    handle.submit(event).await;
     rx.await.expect("canceled")
 }

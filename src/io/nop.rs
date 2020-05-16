@@ -1,4 +1,4 @@
-use crate::io::Operation;
+use crate::io::{Event, Handle};
 use futures::channel::oneshot;
 use std::{io, pin::Pin};
 
@@ -6,7 +6,7 @@ struct Nop {
     tx: Option<oneshot::Sender<io::Result<usize>>>,
 }
 
-impl Operation for Nop {
+impl Event for Nop {
     unsafe fn prepare(self: Pin<&mut Self>, sqe: &mut iou::SubmissionQueueEvent<'_>) {
         uring_sys::io_uring_prep_nop(sqe.raw_mut());
     }
@@ -18,14 +18,8 @@ impl Operation for Nop {
     }
 }
 
-pub async fn nop() -> io::Result<usize> {
-    let acquire_permit = crate::executor::get(|exec| exec.acquire_permit());
-    let permit = acquire_permit.await;
-
+pub async fn nop(handle: &Handle) -> io::Result<usize> {
     let (tx, rx) = oneshot::channel();
-    let nop = Box::pin(Nop { tx: Some(tx) });
-
-    crate::executor::get(|exec| exec.submit_op(permit, nop));
-
+    handle.submit(Nop { tx: Some(tx) }).await;
     rx.await.expect("canceled")
 }

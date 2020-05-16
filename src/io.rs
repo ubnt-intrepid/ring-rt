@@ -1,9 +1,11 @@
-mod accept;
+//! Implementation around io_uring interaction.
+
+pub(crate) mod driver;
 mod nop;
 mod read;
 mod write;
 
-pub use accept::accept;
+pub use driver::Handle;
 pub use nop::nop;
 pub use read::read;
 pub use write::write;
@@ -11,7 +13,8 @@ pub use write::write;
 use iou::{CompletionQueueEvent, SubmissionQueueEvent};
 use std::pin::Pin;
 
-pub trait Operation {
+/// An I/O event handled by io_uring.
+pub trait Event {
     unsafe fn prepare(self: Pin<&mut Self>, sqe: &mut SubmissionQueueEvent<'_>);
     unsafe fn complete(self: Pin<&mut Self>, cqe: &mut CompletionQueueEvent<'_>);
 }

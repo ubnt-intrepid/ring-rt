@@ -1,4 +1,4 @@
-use crate::io::Operation;
+use crate::io::{Event, Handle};
 use futures::channel::oneshot;
 use libc::{sockaddr_in, sockaddr_in6, sockaddr_storage, socklen_t};
 use std::{
@@ -46,7 +46,7 @@ struct Accept {
     _pinned: PhantomPinned,
 }
 
-impl Operation for Accept {
+impl Event for Accept {
     unsafe fn prepare(self: Pin<&mut Self>, sqe: &mut iou::SubmissionQueueEvent<'_>) {
         let me = self.get_unchecked_mut();
         uring_sys::io_uring_prep_accept(
@@ -69,20 +69,18 @@ impl Operation for Accept {
     }
 }
 
-pub async fn accept(listener: &TcpListener) -> io::Result<(TcpStream, SocketAddr)> {
-    let acquire_permit = crate::executor::get(|exec| exec.acquire_permit());
-    let permit = acquire_permit.await;
-
+pub async fn accept(
+    handle: &Handle,
+    listener: &TcpListener,
+) -> io::Result<(TcpStream, SocketAddr)> {
     let (tx, rx) = oneshot::channel();
-    let nop = Box::pin(Accept {
+    let event = Accept {
         fd: listener.as_raw_fd(),
         tx: Some(tx),
         addr: MaybeUninit::uninit(),
         addrlen: mem::size_of::<sockaddr_storage>() as socklen_t,
         _pinned: PhantomPinned,
-    });
-
-    crate::executor::get(|exec| exec.submit_op(permit, nop));
-
+    };
+    handle.submit(event).await;
     rx.await.expect("canceled")
 }

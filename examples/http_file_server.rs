@@ -11,21 +11,26 @@ use std::{
     path::Path,
 };
 
+use ring_rt::{io::Handle, runtime::Runtime};
+
 fn main() -> anyhow::Result<()> {
-    ring_rt::executor::block_on(main_async())
+    let mut rt = Runtime::new().context("failed to start executor")?;
+    let handle = rt.io_handle();
+    rt.block_on(main_async(&handle))
 }
 
-async fn main_async() -> anyhow::Result<()> {
+async fn main_async(handle: &Handle) -> anyhow::Result<()> {
     let listener = TcpListener::bind("127.0.0.1:8000")?;
 
-    let mut incoming = Box::pin(stream::repeat(()).then(|_| ring_rt::io::accept(&listener))).fuse();
+    let mut incoming =
+        Box::pin(stream::repeat(()).then(|_| ring_rt::net::accept(&handle, &listener))).fuse();
     let mut tasks = FuturesUnordered::new();
 
     loop {
         select! {
             res = incoming.select_next_some() => {
                 let (stream, addr) = res?;
-                tasks.push(handle_connection(stream));
+                tasks.push(handle_connection(&handle, stream));
             },
             res = tasks.select_next_some() => res?,
             complete => break,
@@ -35,9 +40,9 @@ async fn main_async() -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn handle_connection(stream: TcpStream) -> anyhow::Result<()> {
+async fn handle_connection(handle: &Handle, stream: TcpStream) -> anyhow::Result<()> {
     let raw_request = loop {
-        let (mut buf, res) = ring_rt::io::read(&stream, vec![0u8; 8196]).await;
+        let (mut buf, res) = ring_rt::io::read(&handle, &stream, vec![0u8; 8196]).await;
         let n = res?;
         assert!(n <= buf.len());
         unsafe {
@@ -65,10 +70,10 @@ async fn handle_connection(stream: TcpStream) -> anyhow::Result<()> {
         )
     });
 
-    let (_, res) = ring_rt::io::write(&stream, response.to_string().into()).await;
+    let (_, res) = ring_rt::io::write(&handle, &stream, response.to_string().into()).await;
     res?;
 
-    let (_, res) = ring_rt::io::write(&stream, body).await;
+    let (_, res) = ring_rt::io::write(&handle, &stream, body).await;
     res?;
 
     Ok(())
