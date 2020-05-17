@@ -1,4 +1,4 @@
-use crate::io::{Event, Handle};
+use crate::{io::Event, runtime::Handle};
 use futures::channel::oneshot;
 use std::{io, marker::PhantomPinned, os::unix::prelude::*, pin::Pin};
 
@@ -38,6 +38,6 @@ pub async fn read(handle: &Handle, f: &impl AsRawFd, buf: Vec<u8>) -> (Vec<u8>, 
         buf: Some(buf),
         _pinned: PhantomPinned,
     };
-    handle.submit(event).await;
+    handle.io_handle().submit(event).await;
     rx.await.expect("canceled")
 }

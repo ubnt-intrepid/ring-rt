@@ -5,6 +5,8 @@ authors = ["Yusuke Sasaki <yusuke.sasaki.nuem@gmail.com>"]
 edition = "2018"
 
 [dependencies]
+async-task = "3"
+crossbeam = "0.7"
 futures = "0.3"
 futures-intrusive = "0.3"
 iou = "0.2"

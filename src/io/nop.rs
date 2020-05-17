@@ -1,4 +1,4 @@
-use crate::io::{Event, Handle};
+use crate::{io::Event, runtime::Handle};
 use futures::channel::oneshot;
 use std::{io, pin::Pin};
 
@@ -20,6 +20,6 @@ impl Event for Nop {
 
 pub async fn nop(handle: &Handle) -> io::Result<usize> {
     let (tx, rx) = oneshot::channel();
-    handle.submit(Nop { tx: Some(tx) }).await;
+    handle.io_handle().submit(Nop { tx: Some(tx) }).await;
     rx.await.expect("canceled")
 }

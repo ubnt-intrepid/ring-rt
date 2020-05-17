@@ -1,11 +1,8 @@
-//! Implementation around io_uring interaction.
-
 pub(crate) mod driver;
 mod nop;
 mod read;
 mod write;
 
-pub use driver::Handle;
 pub use nop::nop;
 pub use read::read;
 pub use write::write;

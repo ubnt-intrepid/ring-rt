@@ -1,4 +1,4 @@
-use crate::io::{Event, Handle};
+use crate::{io::Event, runtime::Handle};
 use futures::channel::oneshot;
 use libc::{sockaddr_in, sockaddr_in6, sockaddr_storage, socklen_t};
 use std::{
@@ -81,6 +81,6 @@ pub async fn accept(
         addrlen: mem::size_of::<sockaddr_storage>() as socklen_t,
         _pinned: PhantomPinned,
     };
-    handle.submit(event).await;
+    handle.io_handle().submit(event).await;
     rx.await.expect("canceled")
 }

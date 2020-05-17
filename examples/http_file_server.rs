@@ -1,9 +1,4 @@
 use anyhow::Context as _;
-use futures::{
-    prelude::*,
-    select,
-    stream::{self, FuturesUnordered},
-};
 use std::{
     borrow::Cow,
     fmt, fs, io,
@@ -11,36 +6,24 @@ use std::{
     path::Path,
 };
 
-use ring_rt::{io::Handle, runtime::Runtime};
+use ring_rt::runtime::{Handle, Runtime};
 
 fn main() -> anyhow::Result<()> {
     let mut rt = Runtime::new().context("failed to start executor")?;
-    let handle = rt.io_handle();
+    let handle = rt.handle().clone();
     rt.block_on(main_async(&handle))
 }
 
 async fn main_async(handle: &Handle) -> anyhow::Result<()> {
     let listener = TcpListener::bind("127.0.0.1:8000")?;
 
-    let mut incoming =
-        Box::pin(stream::repeat(()).then(|_| ring_rt::net::accept(&handle, &listener))).fuse();
-    let mut tasks = FuturesUnordered::new();
-
     loop {
-        select! {
-            res = incoming.select_next_some() => {
-                let (stream, addr) = res?;
-                tasks.push(handle_connection(&handle, stream));
-            },
-            res = tasks.select_next_some() => res?,
-            complete => break,
-        }
+        let (stream, _addr) = ring_rt::net::accept(&handle, &listener).await?;
+        handle.spawn(handle_connection(handle.clone(), stream));
     }
-
-    Ok(())
 }
 
-async fn handle_connection(handle: &Handle, stream: TcpStream) -> anyhow::Result<()> {
+async fn handle_connection(handle: Handle, stream: TcpStream) -> anyhow::Result<()> {
     let raw_request = loop {
         let (mut buf, res) = ring_rt::io::read(&handle, &stream, vec![0u8; 8196]).await;
         let n = res?;
