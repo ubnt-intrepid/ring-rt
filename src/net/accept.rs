@@ -1,9 +1,7 @@
-use crate::{io::Event, runtime::Handle};
-use futures::channel::oneshot;
+use crate::io::Event;
 use libc::{sockaddr_in, sockaddr_in6, sockaddr_storage, socklen_t};
 use std::{
     io,
-    marker::PhantomPinned,
     mem::{self, MaybeUninit},
     net::{self, SocketAddr, TcpListener, TcpStream},
     os::unix::prelude::*,
@@ -40,13 +38,13 @@ fn sockaddr_to_addr(addr: &sockaddr_storage, len: usize) -> io::Result<SocketAdd
 
 struct Accept {
     fd: RawFd,
-    tx: Option<oneshot::Sender<io::Result<(TcpStream, SocketAddr)>>>,
     addr: MaybeUninit<sockaddr_storage>,
     addrlen: socklen_t,
-    _pinned: PhantomPinned,
 }
 
 impl Event for Accept {
+    type Output = io::Result<(TcpStream, SocketAddr)>;
+
     unsafe fn prepare(self: Pin<&mut Self>, sqe: &mut iou::SubmissionQueueEvent<'_>) {
         let me = self.get_unchecked_mut();
         uring_sys::io_uring_prep_accept(
@@ -58,29 +56,23 @@ impl Event for Accept {
         );
     }
 
-    unsafe fn complete(self: Pin<&mut Self>, cqe: &mut iou::CompletionQueueEvent<'_>) {
+    unsafe fn complete(
+        self: Pin<&mut Self>,
+        cqe: &mut iou::CompletionQueueEvent<'_>,
+    ) -> Self::Output {
         let me = self.get_unchecked_mut();
-        let tx = me.tx.take().unwrap();
-        let _ = tx.send(cqe.result().and_then(|n| {
-            let stream = TcpStream::from_raw_fd(n as _);
+        cqe.result().and_then(|fd| {
+            let stream = TcpStream::from_raw_fd(fd as _);
             let addr = sockaddr_to_addr(&*me.addr.as_ptr(), me.addrlen as usize)?;
             Ok((stream, addr))
-        }));
+        })
     }
 }
 
-pub async fn accept(
-    handle: &Handle,
-    listener: &TcpListener,
-) -> io::Result<(TcpStream, SocketAddr)> {
-    let (tx, rx) = oneshot::channel();
-    let event = Accept {
+pub fn accept(listener: &TcpListener) -> impl Event<Output = io::Result<(TcpStream, SocketAddr)>> {
+    Accept {
         fd: listener.as_raw_fd(),
-        tx: Some(tx),
         addr: MaybeUninit::uninit(),
         addrlen: mem::size_of::<sockaddr_storage>() as socklen_t,
-        _pinned: PhantomPinned,
-    };
-    handle.io_handle().submit(event).await;
-    rx.await.expect("canceled")
+    }
 }

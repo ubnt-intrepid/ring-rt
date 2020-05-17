@@ -1,15 +1,14 @@
-use crate::{io::Event, runtime::Handle};
-use futures::channel::oneshot;
-use std::{io, marker::PhantomPinned, os::unix::prelude::*, pin::Pin};
+use crate::io::Event;
+use std::{io, os::unix::prelude::*, pin::Pin};
 
 struct Write {
     fd: RawFd,
-    tx: Option<oneshot::Sender<(Vec<u8>, io::Result<usize>)>>,
     buf: Option<Vec<u8>>,
-    _pinned: PhantomPinned,
 }
 
 impl Event for Write {
+    type Output = (Vec<u8>, io::Result<usize>);
+
     unsafe fn prepare(self: Pin<&mut Self>, sqe: &mut iou::SubmissionQueueEvent<'_>) {
         let me = self.get_unchecked_mut();
         let buf = me.buf.as_deref().unwrap();
@@ -22,26 +21,19 @@ impl Event for Write {
         );
     }
 
-    unsafe fn complete(self: Pin<&mut Self>, cqe: &mut iou::CompletionQueueEvent<'_>) {
-        let me = self.get_unchecked_mut();
-        let tx = me.tx.take().unwrap();
+    unsafe fn complete(
+        self: Pin<&mut Self>,
+        cqe: &mut iou::CompletionQueueEvent<'_>,
+    ) -> Self::Output {
+        let me = self.get_mut();
         let buf = me.buf.take().unwrap();
-        let _ = tx.send((buf, cqe.result()));
+        (buf, cqe.result())
     }
 }
 
-pub async fn write(
-    handle: &Handle,
-    f: &impl AsRawFd,
-    buf: Vec<u8>,
-) -> (Vec<u8>, io::Result<usize>) {
-    let (tx, rx) = oneshot::channel();
-    let event = Write {
+pub fn write(f: &impl AsRawFd, buf: Vec<u8>) -> impl Event<Output = (Vec<u8>, io::Result<usize>)> {
+    Write {
         fd: f.as_raw_fd(),
-        tx: Some(tx),
         buf: Some(buf),
-        _pinned: PhantomPinned,
-    };
-    handle.io_handle().submit(event).await;
-    rx.await.expect("canceled")
+    }
 }

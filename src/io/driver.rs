@@ -1,4 +1,5 @@
-use super::Event;
+use super::event::Event;
+use futures::channel::oneshot;
 use futures_intrusive::sync::{Semaphore, SemaphoreReleaser};
 use iou::IoUring;
 use std::{cell::RefCell, io, mem::ManuallyDrop, pin::Pin, rc::Rc, sync::Arc};
@@ -19,9 +20,26 @@ impl Drop for Permit {
     }
 }
 
+enum OpaqueEvent {}
+enum OpaqueEventOutput {}
+
+struct OpaqueEventVTable {
+    prepare: unsafe fn(
+        *mut OpaqueEvent, //
+        &mut iou::SubmissionQueueEvent<'_>,
+    ),
+    complete: unsafe fn(
+        *mut OpaqueEvent, //
+        &mut iou::CompletionQueueEvent<'_>,
+    ) -> *mut OpaqueEventOutput,
+    drop: unsafe fn(*mut OpaqueEvent),
+}
+
 struct UserData {
-    event: Pin<Box<dyn Event + Send + 'static>>,
     permit: Permit,
+    tx: oneshot::Sender<*mut OpaqueEventOutput>,
+    event: *mut OpaqueEvent,
+    vtable: &'static OpaqueEventVTable,
 }
 
 struct Inner {
@@ -42,16 +60,12 @@ impl Inner {
         }
     }
 
-    async fn add_event(&self, event: Pin<Box<dyn Event + Send + 'static>>) {
-        let permit = self.acquire_permit().await;
-
+    unsafe fn add_event(&self, user_data: Box<UserData>) {
         let mut ring = self.ring.borrow_mut();
-        let mut sqe = ring.next_sqe().expect("SQ is full");
 
-        let mut user_data = Box::new(UserData { event, permit });
-        unsafe {
-            user_data.event.as_mut().prepare(&mut sqe);
-        }
+        let mut sqe = ring.next_sqe().expect("SQ is full");
+        (user_data.vtable.prepare)(user_data.event, &mut sqe);
+
         sqe.set_user_data(Box::into_raw(user_data) as _);
     }
 }
@@ -85,12 +99,11 @@ impl Driver {
 
         while let Some(mut cqe) = ring.cq().peek_for_cqe() {
             unsafe {
-                let UserData {
-                    mut event, //
-                    permit,
-                } = *Box::from_raw(cqe.user_data() as *mut UserData);
-                event.as_mut().complete(&mut cqe);
-                drop(permit);
+                let user_data = *Box::from_raw(cqe.user_data() as *mut UserData);
+                let output = (user_data.vtable.complete)(user_data.event, &mut cqe);
+                let _ = user_data.tx.send(output);
+                (user_data.vtable.drop)(user_data.event);
+                drop(user_data.permit);
             }
         }
 
@@ -104,7 +117,51 @@ pub struct Handle {
 }
 
 impl Handle {
-    pub(crate) async fn submit(&self, event: impl Event + Send + 'static) {
-        self.inner.add_event(Box::pin(event)).await;
+    pub(crate) async fn submit<E: Event>(&self, event: E) -> E::Output
+    where
+        E: Event,
+    {
+        let permit = self.inner.acquire_permit().await;
+
+        let (tx, rx) = oneshot::channel();
+        let user_data = Box::new(UserData {
+            permit,
+            tx,
+            event: Box::into_raw(Box::new(event)) as *mut OpaqueEvent,
+            vtable: &OpaqueEventVTable {
+                prepare: prepare_fn::<E>,
+                complete: complete_fn::<E>,
+                drop: drop_fn::<E>,
+            },
+        });
+
+        unsafe {
+            self.inner.add_event(user_data);
+        }
+
+        let output = rx.await.unwrap();
+
+        unsafe {
+            let output = Box::from_raw(output as *mut E::Output);
+            *output
+        }
     }
+}
+
+unsafe fn prepare_fn<E: Event>(ptr: *mut OpaqueEvent, sqe: &mut iou::SubmissionQueueEvent<'_>) {
+    let me: Pin<&mut E> = Pin::new_unchecked(&mut *(ptr as *mut E));
+    <E as Event>::prepare(me, sqe);
+}
+
+unsafe fn complete_fn<E: Event>(
+    ptr: *mut OpaqueEvent,
+    cqe: &mut iou::CompletionQueueEvent<'_>,
+) -> *mut OpaqueEventOutput {
+    let me: Pin<&mut E> = Pin::new_unchecked(&mut *(ptr as *mut E));
+    let result = <E as Event>::complete(me, cqe);
+    Box::into_raw(Box::new(result)) as *mut OpaqueEventOutput
+}
+
+unsafe fn drop_fn<E: Event>(ptr: *mut OpaqueEvent) {
+    std::ptr::drop_in_place(ptr as *mut E);
 }

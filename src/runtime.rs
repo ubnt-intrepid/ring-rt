@@ -1,4 +1,7 @@
-use crate::io::driver::{Driver, Handle as IoHandle};
+use crate::io::{
+    driver::{Driver, Handle as IoHandle},
+    Event,
+};
 use crossbeam::channel::{Receiver, Sender};
 use futures::{
     future::Future,
@@ -34,8 +37,8 @@ pub struct Handle {
 }
 
 impl Handle {
-    pub(crate) fn io_handle(&self) -> &IoHandle {
-        &self.io_handle
+    pub async fn submit<E: Event>(&self, event: E) -> E::Output {
+        self.io_handle.submit(event).await
     }
 
     pub fn spawn<Fut>(&self, future: Fut) -> JoinHandle<Fut::Output>

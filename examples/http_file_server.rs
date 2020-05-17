@@ -18,14 +18,16 @@ async fn main_async(handle: &Handle) -> anyhow::Result<()> {
     let listener = TcpListener::bind("127.0.0.1:8000")?;
 
     loop {
-        let (stream, _addr) = ring_rt::net::accept(&handle, &listener).await?;
+        let (stream, _addr) = handle.submit(ring_rt::net::accept(&listener)).await?;
         handle.spawn(handle_connection(handle.clone(), stream));
     }
 }
 
 async fn handle_connection(handle: Handle, stream: TcpStream) -> anyhow::Result<()> {
     let raw_request = loop {
-        let (mut buf, res) = ring_rt::io::read(&handle, &stream, vec![0u8; 8196]).await;
+        let (mut buf, res) = handle
+            .submit(ring_rt::io::read(&stream, vec![0u8; 8196]))
+            .await;
         let n = res?;
         assert!(n <= buf.len());
         unsafe {
@@ -53,10 +55,12 @@ async fn handle_connection(handle: Handle, stream: TcpStream) -> anyhow::Result<
         )
     });
 
-    let (_, res) = ring_rt::io::write(&handle, &stream, response.to_string().into()).await;
+    let (_, res) = handle
+        .submit(ring_rt::io::write(&stream, response.to_string().into()))
+        .await;
     res?;
 
-    let (_, res) = ring_rt::io::write(&handle, &stream, body).await;
+    let (_, res) = handle.submit(ring_rt::io::write(&stream, body)).await;
     res?;
 
     Ok(())
