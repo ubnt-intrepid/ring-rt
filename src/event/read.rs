@@ -1,9 +1,10 @@
-use crate::io::Event;
+use crate::event::Event;
 use std::{io, os::unix::prelude::*, pin::Pin};
 
 struct Read {
     fd: RawFd,
     buf: Option<Vec<u8>>,
+    offset: libc::off_t,
 }
 
 impl Event for Read {
@@ -17,7 +18,7 @@ impl Event for Read {
             me.fd,
             buf.as_mut_ptr().cast(),
             buf.len() as libc::c_uint,
-            0,
+            me.offset,
         );
     }
 
@@ -31,9 +32,14 @@ impl Event for Read {
     }
 }
 
-pub fn read(f: &impl AsRawFd, buf: Vec<u8>) -> impl Event<Output = (Vec<u8>, io::Result<usize>)> {
+pub fn read(
+    f: &impl AsRawFd,
+    buf: Vec<u8>,
+    offset: libc::off_t,
+) -> impl Event<Output = (Vec<u8>, io::Result<usize>)> {
     Read {
         fd: f.as_raw_fd(),
         buf: Some(buf),
+        offset,
     }
 }

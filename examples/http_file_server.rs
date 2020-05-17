@@ -18,7 +18,9 @@ async fn main_async(handle: &Handle) -> anyhow::Result<()> {
     let listener = TcpListener::bind("127.0.0.1:8000")?;
 
     loop {
-        let (stream, _addr) = handle.submit(ring_rt::net::accept(&listener)).await?;
+        let (stream, _addr) = handle
+            .submit(ring_rt::event::accept(&listener, libc::SOCK_CLOEXEC))
+            .await?;
         handle.spawn(handle_connection(handle.clone(), stream));
     }
 }
@@ -26,7 +28,7 @@ async fn main_async(handle: &Handle) -> anyhow::Result<()> {
 async fn handle_connection(handle: Handle, stream: TcpStream) -> anyhow::Result<()> {
     let raw_request = loop {
         let (mut buf, res) = handle
-            .submit(ring_rt::io::read(&stream, vec![0u8; 8196]))
+            .submit(ring_rt::event::read(&stream, vec![0u8; 8196], 0))
             .await;
         let n = res?;
         assert!(n <= buf.len());
@@ -56,11 +58,15 @@ async fn handle_connection(handle: Handle, stream: TcpStream) -> anyhow::Result<
     });
 
     let (_, res) = handle
-        .submit(ring_rt::io::write(&stream, response.to_string().into()))
+        .submit(ring_rt::event::write(
+            &stream,
+            response.to_string().into(),
+            0,
+        ))
         .await;
     res?;
 
-    let (_, res) = handle.submit(ring_rt::io::write(&stream, body)).await;
+    let (_, res) = handle.submit(ring_rt::event::write(&stream, body, 0)).await;
     res?;
 
     Ok(())

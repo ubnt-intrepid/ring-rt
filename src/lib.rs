@@ -1,5 +1,6 @@
 #![warn(clippy::unimplemented, clippy::todo)]
 
-pub mod io;
-pub mod net;
+mod io_driver;
+
+pub mod event;
 pub mod runtime;

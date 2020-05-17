@@ -1,4 +1,4 @@
-use super::event::Event;
+use crate::event::Event;
 use futures::channel::oneshot;
 use futures_intrusive::sync::{Semaphore, SemaphoreReleaser};
 use iou::IoUring;

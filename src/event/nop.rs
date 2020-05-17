@@ -1,4 +1,4 @@
-use crate::io::Event;
+use crate::event::Event;
 use std::{io, pin::Pin};
 
 struct Nop;

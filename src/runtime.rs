@@ -1,6 +1,6 @@
-use crate::io::{
-    driver::{Driver, Handle as IoHandle},
-    Event,
+use crate::{
+    event::Event,
+    io_driver::{self, Driver},
 };
 use crossbeam::channel::{Receiver, Sender};
 use futures::{
@@ -32,7 +32,7 @@ impl<T> Future for JoinHandle<T> {
 
 #[derive(Clone)]
 pub struct Handle {
-    io_handle: IoHandle,
+    io_handle: io_driver::Handle,
     tx_pending_tasks: Sender<async_task::Task<()>>,
 }
 

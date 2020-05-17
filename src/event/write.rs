@@ -1,9 +1,10 @@
-use crate::io::Event;
+use crate::event::Event;
 use std::{io, os::unix::prelude::*, pin::Pin};
 
 struct Write {
     fd: RawFd,
     buf: Option<Vec<u8>>,
+    offset: libc::off_t,
 }
 
 impl Event for Write {
@@ -17,7 +18,7 @@ impl Event for Write {
             me.fd,
             buf.as_ptr().cast(),
             buf.len() as libc::c_uint,
-            0,
+            me.offset,
         );
     }
 
@@ -31,9 +32,14 @@ impl Event for Write {
     }
 }
 
-pub fn write(f: &impl AsRawFd, buf: Vec<u8>) -> impl Event<Output = (Vec<u8>, io::Result<usize>)> {
+pub fn write(
+    f: &impl AsRawFd,
+    buf: Vec<u8>,
+    offset: libc::off_t,
+) -> impl Event<Output = (Vec<u8>, io::Result<usize>)> {
     Write {
         fd: f.as_raw_fd(),
         buf: Some(buf),
+        offset,
     }
 }

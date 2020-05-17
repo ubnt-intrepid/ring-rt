@@ -1,4 +1,4 @@
-use crate::io::Event;
+use crate::event::Event;
 use libc::{sockaddr_in, sockaddr_in6, sockaddr_storage, socklen_t};
 use std::{
     io,
@@ -40,6 +40,7 @@ struct Accept {
     fd: RawFd,
     addr: MaybeUninit<sockaddr_storage>,
     addrlen: socklen_t,
+    flags: libc::c_int,
 }
 
 impl Event for Accept {
@@ -52,7 +53,7 @@ impl Event for Accept {
             me.fd,
             me.addr.as_mut_ptr().cast(),
             &mut me.addrlen,
-            0,
+            me.flags,
         );
     }
 
@@ -69,10 +70,14 @@ impl Event for Accept {
     }
 }
 
-pub fn accept(listener: &TcpListener) -> impl Event<Output = io::Result<(TcpStream, SocketAddr)>> {
+pub fn accept(
+    listener: &TcpListener,
+    flags: libc::c_int,
+) -> impl Event<Output = io::Result<(TcpStream, SocketAddr)>> {
     Accept {
         fd: listener.as_raw_fd(),
         addr: MaybeUninit::uninit(),
         addrlen: mem::size_of::<sockaddr_storage>() as socklen_t,
+        flags,
     }
 }
