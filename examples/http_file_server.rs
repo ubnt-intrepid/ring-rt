@@ -126,8 +126,8 @@ async fn handle_request(method: &str, path: &str) -> anyhow::Result<(Response, V
             let response = Response {
                 status: "200 OK",
                 headers: vec![
-                    ("content-type".into(), content_type.into()),
-                    ("content-length".into(), metadata.len().to_string().into()),
+                    ("content-type", content_type.into()),
+                    ("content-length", metadata.len().to_string().into()),
                 ],
             };
 
@@ -165,8 +165,8 @@ fn make_error_response(status: &'static str, msg: &str) -> (Response, Vec<u8>) {
         Response {
             status,
             headers: vec![
-                ("content-type".into(), "text/html".into()),
-                ("content-length".into(), body_len.into()),
+                ("content-type", "text/html".into()),
+                ("content-length", body_len.into()),
             ],
         },
         body.into(),
